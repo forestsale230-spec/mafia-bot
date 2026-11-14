@@ -19,7 +19,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 TOKEN = os.getenv("BOT_TOKEN", "9124751414:AAGL0-Sj8Y2CksynJLEsiYdcIyv4PGdA2bQ")
 
@@ -61,6 +61,8 @@ ROLE_DESC = {
 bot: Bot
 games: dict[int, "Game"] = {}      # chat_id -> Game
 user_game: dict[int, int] = {}     # user_id -> chat_id
+stats: dict[int, list] = {}        # user_id -> [ism, g'alabalar soni]
+next_subs: dict[int, set] = {}     # chat_id -> keyingi o'yin haqida xabar kutayotganlar
 
 
 @dataclass
@@ -82,6 +84,9 @@ class Game:
     heal: int | None = None
     check_done: bool = False
     day_votes: dict[int, int] = field(default_factory=dict)
+    reg_msg_id: int = 0
+    deadline: float = 0.0
+    start_now: bool = False
 
     def alive(self):
         return [p for p in self.players.values() if p.alive]
@@ -130,25 +135,56 @@ def choose_kb(prefix: str, g: Game, targets: list[Player]) -> InlineKeyboardMark
 
 
 # ---- Buyruqlar ----------------------------------------------------------------
+async def join_kb(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="➕ Qo'shilish", url=await bot_link(f"join_{chat_id}"))
+    ]])
+
+
+async def update_reg(g: Game):
+    """Har safar yangi xabar yubormaydi - bitta ro'yxat xabarini tahrirlaydi."""
+    left = max(0, int(g.deadline - time.time()))
+    names = "\n".join(f"{i}. {mention(p)}" for i, p in enumerate(g.players.values(), 1)) or "—"
+    text = (f"<b>Ro'yxatdan o'tish</b>\n\n"
+            f"<b>Ro'yxatdan o'tganlar ({len(g.players)}):</b>\n{names}\n\n"
+            f"Kamida {MIN_PLAYERS} o'yinchi kerak. Qolgan vaqt: ~{left} sek.")
+    try:
+        await bot.edit_message_text(text, chat_id=g.chat_id, message_id=g.reg_msg_id,
+                                    reply_markup=await join_kb(g.chat_id))
+    except Exception:
+        pass  # "message is not modified" va h.k.
+
+
 async def cmd_game(m: Message):
     if m.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return await m.answer("Bu buyruq faqat guruhda ishlaydi.")
     if m.chat.id in games:
         return await m.answer("Bu guruhda o'yin allaqachon boshlangan.")
     g = Game(chat_id=m.chat.id)
+    g.deadline = time.time() + REG_TIME
     games[m.chat.id] = g
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="➕ Qo'shilish", url=await bot_link(f"join_{m.chat.id}"))
-    ]])
-    await m.answer(
-        f"🎮 <b>Mafia o'yini</b> boshlandi!\nRo'yxatdan o'tish: {REG_TIME} sekund.\n"
-        f"Kamida {MIN_PLAYERS} o'yinchi kerak.", reply_markup=kb)
+    msg = await m.answer("<b>Ro'yxatdan o'tish</b>", reply_markup=await join_kb(m.chat.id))
+    g.reg_msg_id = msg.message_id
+    await update_reg(g)
+    try:
+        await bot.pin_chat_message(m.chat.id, msg.message_id, disable_notification=True)
+    except Exception:
+        pass
+    for uid in next_subs.pop(m.chat.id, set()):
+        await dm(uid, f"🎮 {escape(m.chat.title or 'Guruh')} da yangi o'yin boshlandi! Qo'shiling.")
     asyncio.create_task(run_game(g))
 
 
 async def cmd_start(m: Message, command: CommandObject):
     arg = command.args or ""
     if m.chat.type != ChatType.PRIVATE:
+        # guruhda /start - ro'yxatni yopib o'yinni darhol boshlash
+        g = games.get(m.chat.id)
+        if g and g.phase == "reg":
+            if len(g.players) >= MIN_PLAYERS:
+                g.start_now = True
+            else:
+                await m.answer(f"Kamida {MIN_PLAYERS} o'yinchi kerak.")
         return
     if not arg.startswith("join_"):
         return await m.answer("Salom! Meni guruhga qo'shing va guruhda /game yozing 🎮")
@@ -164,7 +200,39 @@ async def cmd_start(m: Message, command: CommandObject):
     user_game[m.from_user.id] = chat_id
     chat = await bot.get_chat(chat_id)
     await m.answer(f"Siz o'yinga omadli qo'shildingiz <b>{escape(chat.title or '')}</b>")
-    await bot.send_message(chat_id, f"➕ {escape(m.from_user.full_name)} qo'shildi. Jami: {len(g.players)}")
+    await update_reg(g)   # guruhga yangi xabar emas, ro'yxatni tahrirlaymiz
+
+
+async def cmd_extend(m: Message):
+    g = games.get(m.chat.id)
+    if g and g.phase == "reg":
+        g.deadline += 30
+        await update_reg(g)
+        await m.answer("⏱ Ro'yxatdan o'tish vaqti 30 soniyaga uzaytirildi.")
+
+
+async def cmd_next(m: Message):
+    next_subs.setdefault(m.chat.id, set()).add(m.from_user.id)
+    await m.answer("Keyingi o'yin boshlanganda sizga shaxsiy xabar yuboraman 🔔 (avval botga /start bosgan bo'lishingiz kerak).")
+
+
+async def cmd_top(m: Message):
+    if not stats:
+        return await m.answer("Reyting hozircha bo'sh.")
+    top = sorted(stats.values(), key=lambda x: -x[1])[:10]
+    await m.answer("<b>🏆 Reyting (g'alabalar)</b>\n" + "\n".join(
+        f"{i}. {escape(n)} - {w}" for i, (n, w) in enumerate(top, 1)))
+
+
+async def cmd_share(m: Message):
+    await m.answer(f"Do'stlaringizni taklif qiling 👉 {await bot_link()}")
+
+
+async def cmd_help(m: Message):
+    await m.answer(
+        "<b>Mafia o'yini</b>\n\n/game - yangi o'yinni boshlash\n/extend - ro'yxatdan o'tish vaqtini uzaytirish\n"
+        "/start - ro'yxatdan o'tishni tugatib o'yinni boshlash\n/stop - o'yinni to'xtatish\n"
+        "/next - keyingi o'yin haqida xabar olish\n/top - reyting\n/share - do'stlarni taklif qilish")
 
 
 async def cmd_fileid(m: Message):
@@ -176,6 +244,7 @@ async def cmd_fileid(m: Message):
 async def cmd_stop(m: Message):
     g = games.get(m.chat.id)
     if g:
+        g.start_now = False
         await finish(g, None, "O'yin to'xtatildi.")
 
 
@@ -224,6 +293,8 @@ async def finish(g: Game, winner: str | None, note: str = ""):
     win_roles = ("don", "mafia") if winner == "mafia" else ("doctor", "cop", "civil")
     winners = [p for p in g.players.values() if p.role in win_roles]
     losers = [p for p in g.players.values() if p.role not in win_roles]
+    for p in winners:
+        stats.setdefault(p.uid, [p.name, 0])[1] += 1
     dur = int(time.time() - g.started_at)
     title = "Mafia g'alaba qozondi" if winner == "mafia" else "Tinch axoli g'alaba qozondi"
     text = (
@@ -243,12 +314,16 @@ async def wait_until(seconds: int, cond):
 
 
 async def run_game(g: Game):
-    await asyncio.sleep(REG_TIME)
+    while time.time() < g.deadline and not g.start_now and g.phase == "reg":
+        await asyncio.sleep(1)
+    if g.phase == "end":
+        return
     if len(g.players) < MIN_PLAYERS:
         games.pop(g.chat_id, None)
         for uid in g.players:
             user_game.pop(uid, None)
         return await bot.send_message(g.chat_id, "O'yinni boshlash uchun o'yinchilar yetarli emas...")
+    g.phase = "starting"
     g.started_at = time.time()
     assign_roles(g)
     await send_roles(g)
@@ -256,6 +331,8 @@ async def run_game(g: Game):
     await asyncio.sleep(3)
 
     while True:
+        if g.phase == "end":
+            return
         g.day += 1
         # ---------------- TUN ----------------
         g.phase = "night"
@@ -281,6 +358,8 @@ async def run_game(g: Game):
                     and (not g.by_role("doctor") or g.heal is not None)
                     and (not g.by_role("cop") or g.check_done))
         await wait_until(NIGHT_TIME, night_done)
+        if g.phase == "end":
+            return
 
         # tun natijasi
         victim = None
@@ -316,6 +395,8 @@ async def run_game(g: Game):
             f"<b>Tirik o'yinchilar:</b>\n{players_list(g)}\n\n<b>Ulardan kimlar:</b>\n{roles_txt}\n"
             f"Jami: {len(alive)} kishi.\n\nTunda bo'lgan xodisalarni muxokama qilishning ayni vaqti... ({TALK_TIME} sek.)")
         await asyncio.sleep(TALK_TIME)
+        if g.phase == "end":
+            return
 
         # ---------------- OVOZ BERISH ----------------
         g.phase = "vote"
@@ -326,6 +407,8 @@ async def run_game(g: Game):
         for p in g.alive():
             await dm(p.uid, "Kimni osmoqchisiz? Ovoz bering:", choose_kb("v", g, [x for x in g.alive() if x.uid != p.uid]))
         await wait_until(VOTE_TIME, lambda: len(g.day_votes) >= len(g.alive()))
+        if g.phase == "end":
+            return
 
         if g.day_votes:
             c = Counter(g.day_votes.values()).most_common()
@@ -380,7 +463,22 @@ async def main():
     global bot
     bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+    await bot.set_my_commands([
+        BotCommand(command="game", description="yangi o'yinni boshlash"),
+        BotCommand(command="extend", description="ro'yxatdan o'tish vaqtini uzaytirish"),
+        BotCommand(command="start", description="ro'yxatdan o'tishni tugatish"),
+        BotCommand(command="stop", description="o'yinni to'xtatish"),
+        BotCommand(command="next", description="keyingi o'yin haqida xabar"),
+        BotCommand(command="top", description="reyting"),
+        BotCommand(command="share", description="do'stlaringizni taklif qiling"),
+        BotCommand(command="help", description="yordam"),
+    ])
     dp.message.register(cmd_game, Command("game"))
+    dp.message.register(cmd_extend, Command("extend"))
+    dp.message.register(cmd_next, Command("next"))
+    dp.message.register(cmd_top, Command("top"))
+    dp.message.register(cmd_share, Command("share"))
+    dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_stop, Command("stop"))
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_fileid, F.animation)
