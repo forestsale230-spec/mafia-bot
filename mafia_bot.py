@@ -1,12 +1,3 @@
-"""
-Mafiya Telegram boti (True Mafia kabi) - aiogram 3
-O'rnatish:   pip install aiogram
-Ishga tushirish:  BOT_TOKEN=123:ABC python mafia_bot.py
-
-Guruhda:  /game  -> ro'yxatdan o'tish boshlanadi
-Har bir o'yinchi "Qo'shilish" tugmasi orqali botga o'tib /start bosadi,
-shundan keyin bot unga rolni SHAXSIY xabarda yuboradi.
-"""
 import asyncio
 import os
 import random
@@ -21,18 +12,16 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+# Токен бота (лучше передавать через переменные окружения, но можно вставить прямо сюда)
 TOKEN = os.getenv("BOT_TOKEN", "9124751414:AAGL0-Sj8Y2CksynJLEsiYdcIyv4PGdA2bQ")
 
-# ---- Sozlamalar -------------------------------------------------------------
-MIN_PLAYERS = 4
-REG_TIME = 60      # ro'yxatdan o'tish (sekund)
-NIGHT_TIME = 45    # tun
-TALK_TIME = 30     # kunduzgi muhokama
-VOTE_TIME = 45     # ovoz berish
+# ---- Sozlamalar (O'yin sozlamalari) ------------------------------------------
+MIN_PLAYERS = 3    # Sinov uchun 3 ta qilsa ham bo'ladi, aslida 4 tadan ko'p tavsiya etiladi
+REG_TIME = 60      # Ro'yxatdan o'tish vaqti (sekund)
+NIGHT_TIME = 45    # Tun vaqti
+TALK_TIME = 30     # Kunduzgi muhokama vaqti
+VOTE_TIME = 45     # Ovoz berish vaqti
 
-# GIF: giphy/tenor to'g'ridan-to'g'ri .gif/.mp4 havolasi YOKI file_id.
-# Bo'sh qoldirsangiz, bot oddiy matn yuboradi.
-# Tavsiya: o'zingiz GIF'ni botga yuboring, file_id'ni oling (pastdagi /fileid).
 GIFS = {
     "night": "",
     "day1": "",
@@ -52,7 +41,7 @@ ROLE_NAME = {
 }
 ROLE_DESC = {
     "don": "Siz - 🤵🏻 Donsiz!\nMafiyaga boshchilik qilasiz. Qurbonni tanlashda sizning ovozingiz hal qiluvchi.",
-    "mafia": "Siz - 🤵🏼 Mafiasiz!\nDonga bo'ysunasiz va sizga qarshilik qilganlarni o'ldirasiz. Don o'lsa siz yangi Don bo'lishingiz mumkin.",
+    "mafia": "Siz - 🤵🏼 Mafiasiz!\nDon bo'ysunasiz va sizga qarshilik qilganlarni o'ldirasiz. Don o'lsa siz yangi Don bo'lishingiz mumkin.",
     "doctor": "Siz - 👨🏼‍⚕️ Shifokorsiz!\nHar tun bitta odamni davolab, o'limdan qutqarasiz.",
     "cop": "Siz - 🕵🏼 Komissarsiz!\nHar tun bitta odamning rolini tekshirasiz.",
     "civil": "Siz - 👨🏼 Tinch axolisiz!\nKunduzi ovoz berib mafiyani toping.",
@@ -134,7 +123,6 @@ def choose_kb(prefix: str, g: Game, targets: list[Player]) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# ---- Buyruqlar ----------------------------------------------------------------
 async def join_kb(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="➕ Qo'shilish", url=await bot_link(f"join_{chat_id}"))
@@ -142,7 +130,6 @@ async def join_kb(chat_id: int) -> InlineKeyboardMarkup:
 
 
 async def update_reg(g: Game):
-    """Har safar yangi xabar yubormaydi - bitta ro'yxat xabarini tahrirlaydi."""
     left = max(0, int(g.deadline - time.time()))
     names = "\n".join(f"{i}. {mention(p)}" for i, p in enumerate(g.players.values(), 1)) or "—"
     text = (f"<b>Ro'yxatdan o'tish</b>\n\n"
@@ -152,7 +139,7 @@ async def update_reg(g: Game):
         await bot.edit_message_text(text, chat_id=g.chat_id, message_id=g.reg_msg_id,
                                     reply_markup=await join_kb(g.chat_id))
     except Exception:
-        pass  # "message is not modified" va h.k.
+        pass
 
 
 async def cmd_game(m: Message):
@@ -178,7 +165,6 @@ async def cmd_game(m: Message):
 async def cmd_start(m: Message, command: CommandObject):
     arg = command.args or ""
     if m.chat.type != ChatType.PRIVATE:
-        # guruhda /start - ro'yxatni yopib o'yinni darhol boshlash
         g = games.get(m.chat.id)
         if g and g.phase == "reg":
             if len(g.players) >= MIN_PLAYERS:
@@ -199,8 +185,8 @@ async def cmd_start(m: Message, command: CommandObject):
     g.players[m.from_user.id] = Player(m.from_user.id, m.from_user.full_name)
     user_game[m.from_user.id] = chat_id
     chat = await bot.get_chat(chat_id)
-    await m.answer(f"Siz o'yinga omadli qo'shildingiz <b>{escape(chat.title or '')}</b>")
-    await update_reg(g)   # guruhga yangi xabar emas, ro'yxatni tahrirlaymiz
+    await m.answer(f"Siz o'yinga omadli qo'shildingiz: <b>{escape(chat.title or '')}</b>")
+    await update_reg(g)
 
 
 async def cmd_extend(m: Message):
@@ -213,7 +199,7 @@ async def cmd_extend(m: Message):
 
 async def cmd_next(m: Message):
     next_subs.setdefault(m.chat.id, set()).add(m.from_user.id)
-    await m.answer("Keyingi o'yin boshlanganda sizga shaxsiy xabar yuboraman 🔔 (avval botga /start bosgan bo'lishingiz kerak).")
+    await m.answer("Keyingi o'yin boshlanganda sizga shaxsiy xabar yuboraman 🔔")
 
 
 async def cmd_top(m: Message):
@@ -230,15 +216,8 @@ async def cmd_share(m: Message):
 
 async def cmd_help(m: Message):
     await m.answer(
-        "<b>Mafia o'yini</b>\n\n/game - yangi o'yinni boshlash\n/extend - ro'yxatdan o'tish vaqtini uzaytirish\n"
-        "/start - ro'yxatdan o'tishni tugatib o'yinni boshlash\n/stop - o'yinni to'xtatish\n"
-        "/next - keyingi o'yin haqida xabar olish\n/top - reyting\n/share - do'stlarni taklif qilish")
-
-
-async def cmd_fileid(m: Message):
-    """GIF'ni botga yuboring - file_id qaytaradi (GIFS lug'atiga qo'yish uchun)."""
-    if m.animation:
-        await m.answer(f"<code>{m.animation.file_id}</code>")
+        "<b>Mafia o'yini</b>\n\n/game - yangi o'yinni boshlash\n/extend - vaqtni uzaytirish\n"
+        "/start - o'yinni erta boshlash\n/stop - o'yinni to'xtatish\n/top - reyting")
 
 
 async def cmd_stop(m: Message):
@@ -248,7 +227,6 @@ async def cmd_stop(m: Message):
         await finish(g, None, "O'yin to'xtatildi.")
 
 
-# ---- O'yin jarayoni -----------------------------------------------------------
 def assign_roles(g: Game):
     ps = list(g.players.values())
     random.shuffle(ps)
@@ -269,7 +247,7 @@ async def send_roles(g: Game):
         text = ROLE_DESC[p.role]
         if p.role in ("don", "mafia") and len(mafia) > 1:
             team = "\n".join(f"{mention(x)} - {ROLE_NAME[x.role]}" for x in mafia if x.uid != p.uid)
-            text += f"\n\n<b>Sheriklaringizni eslab qoling:</b>\n{team}"
+            text += f"\n\n<b>Sheriklaringiz:</b>\n{team}"
         await dm(p.uid, text)
 
 
@@ -296,12 +274,11 @@ async def finish(g: Game, winner: str | None, note: str = ""):
     for p in winners:
         stats.setdefault(p.uid, [p.name, 0])[1] += 1
     dur = int(time.time() - g.started_at)
-    title = "Mafia g'alaba qozondi" if winner == "mafia" else "Tinch axoli g'alaba qozondi"
+    title = "Mafia g'alaba qozondi!" if winner == "mafia" else "Tinch aholi g'alaba qozondi!"
     text = (
         f"<b>O'yin tugadi!</b>\n{title}\n\n"
         f"<b>G'oliblar:</b>\n" + "\n".join(f"  {mention(p)} - {ROLE_NAME[p.role]}" for p in winners) +
-        f"\n\n<b>Qolgan o'yinchilar:</b>\n" + "\n".join(f"  {mention(p)} - {ROLE_NAME[p.role]}" for p in losers) +
-        f"\n\nO'yin: {dur // 60} min. {dur % 60} sek. davom etdi"
+        f"\n\nO'yin {dur // 60} min. {dur % 60} sek. davom etdi."
     )
     await send_gif(g.chat_id, "win_mafia" if winner == "mafia" else "win_city", text)
 
@@ -323,31 +300,30 @@ async def run_game(g: Game):
         for uid in g.players:
             user_game.pop(uid, None)
         return await bot.send_message(g.chat_id, "O'yinni boshlash uchun o'yinchilar yetarli emas...")
+    
     g.phase = "starting"
     g.started_at = time.time()
     assign_roles(g)
     await send_roles(g)
-    await bot.send_message(g.chat_id, "<b>O'yin boshlandi!</b>\nBir necha soniya ichida bot sizga rol va uning tavsifi bilan shaxsiy xabar yuboradi.")
+    await bot.send_message(g.chat_id, "<b>O'yin boshlandi!</b>\nBarcha o'yinchilarga rollar shaxsiy xabarga yuborildi.")
     await asyncio.sleep(3)
 
     while True:
         if g.phase == "end":
             return
         g.day += 1
-        # ---------------- TUN ----------------
+        # --- TUN ---
         g.phase = "night"
         g.mafia_votes.clear()
         g.heal = None
         g.check_done = False
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Botga o'tish", url=await bot_link())]])
-        await send_gif(g.chat_id, "night",
-                       "🌃 <b>Tun</b>\nKo'chaga faqat jasur va qo'rqmas odamlar chiqishdi. Ertalab tirik qolganlarni sanaymiz...", kb)
-        await bot.send_message(g.chat_id, f"<b>Tirik o'yinchilar:</b>\n{players_list(g)}\n\nTonggacha {NIGHT_TIME} sek. qoldi")
-
+        await send_gif(g.chat_id, "night", "🌃 <b>Tun</b>\nShahar uyquga ketdi...", kb)
+        
         mafia = g.mafia_alive()
         for p in mafia:
             targets = [x for x in g.alive() if x.role not in ("don", "mafia")]
-            await dm(p.uid, "<b>Mafia keyingi qurboni uchun ovoz berish o'tkazyapti:</b>", choose_kb("k", g, targets))
+            await dm(p.uid, "Kimni otmoqchisiz?", choose_kb("k", g, targets))
         for p in g.by_role("doctor"):
             await dm(p.uid, "Kimni davolamoqchisiz?", choose_kb("d", g, g.alive()))
         for p in g.by_role("cop"):
@@ -361,7 +337,6 @@ async def run_game(g: Game):
         if g.phase == "end":
             return
 
-        # tun natijasi
         victim = None
         if g.mafia_votes:
             don = next((p for p in g.mafia_alive() if p.role == "don"), None)
@@ -369,43 +344,36 @@ async def run_game(g: Game):
                 victim = g.mafia_votes[don.uid]
             else:
                 c = Counter(g.mafia_votes.values()).most_common()
-                top = [u for u, n in c if n == c[0][1]]
-                victim = random.choice(top)
+                victim = random.choice([u for u, n in c if n == c[0][1]])
+
         g.phase = "day"
-        await send_gif(g.chat_id, f"day{min(g.day, 3)}",
-                       f"🏙 <b>{g.day}-kun</b>\nQuyosh chiqib, tunda to'kilgan qonlarni quritdi...")
+        await send_gif(g.chat_id, f"day{min(g.day, 3)}", f"🏙 <b>{g.day}-kun</b>\nTong otdi...")
         if victim is not None and victim != g.heal:
             v = g.players[victim]
             v.alive = False
-            await send_gif(g.chat_id, "kill", f"Tunda {ROLE_NAME[v.role]} {mention(v)} vahshiylarcha o'ldirildi...")
+            await bot.send_message(g.chat_id, f"Tunda {ROLE_NAME[v.role]} {mention(v)} o'ldirildi ⚰️")
             await dm(v.uid, "Sizni o'ldirishdi :(")
         else:
-            await bot.send_message(g.chat_id, "Ishonish qiyin, lekin bu tunda hech kim o'lmadi 😮")
+            await bot.send_message(g.chat_id, "Bu tunda hech kim o'lmadi! 😮")
+        
         w = win_check(g)
         if w:
             return await finish(g, w)
 
-        # ---------------- KUNDUZ ----------------
-        alive = g.alive()
-        counts = Counter(ROLE_NAME[p.role] for p in alive if p.role in ("doctor", "cop", "don"))
-        civ = sum(1 for p in alive if p.role in ("civil", "mafia"))
-        roles_txt = ", ".join(counts.keys()) + (f", {civ} ta boshqa" if civ else "")
-        await bot.send_message(
-            g.chat_id,
-            f"<b>Tirik o'yinchilar:</b>\n{players_list(g)}\n\n<b>Ulardan kimlar:</b>\n{roles_txt}\n"
-            f"Jami: {len(alive)} kishi.\n\nTunda bo'lgan xodisalarni muxokama qilishning ayni vaqti... ({TALK_TIME} sek.)")
+        # --- KUNDUZGI MUHOKAMA ---
+        await bot.send_message(g.chat_id, f"<b>Tirik o'yinchilar:</b>\n{players_list(g)}\n\nMuhokama vaqti: {TALK_TIME} sek.")
         await asyncio.sleep(TALK_TIME)
         if g.phase == "end":
             return
 
-        # ---------------- OVOZ BERISH ----------------
+        # --- OVOZ BERISH ---
         g.phase = "vote"
         g.day_votes.clear()
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Ovoz berish", url=await bot_link())]])
-        await bot.send_message(
-            g.chat_id, f"⚖️ Aybdorlarni aniqlash va jazolash vaqti keldi.\nOvoz berish uchun {VOTE_TIME} sekund", reply_markup=kb)
+        await bot.send_message(g.chat_id, f"⚖️ Kimni osamiz? ({VOTE_TIME} sek)", reply_markup=kb)
         for p in g.alive():
-            await dm(p.uid, "Kimni osmoqchisiz? Ovoz bering:", choose_kb("v", g, [x for x in g.alive() if x.uid != p.uid]))
+            await dm(p.uid, "Ovoz bering:", choose_kb("v", g, [x for x in g.alive() if x.uid != p.uid]))
+        
         await wait_until(VOTE_TIME, lambda: len(g.day_votes) >= len(g.alive()))
         if g.phase == "end":
             return
@@ -415,24 +383,22 @@ async def run_game(g: Game):
             if len(c) == 1 or c[0][1] > c[1][1]:
                 v = g.players[c[0][0]]
                 v.alive = False
-                await bot.send_message(g.chat_id, f"{mention(v)} - {ROLE_NAME[v.role]} edi. Xalq uni osdi ⚰️")
+                await bot.send_message(g.chat_id, f"{mention(v)} ({ROLE_NAME[v.role]}) osib o'ldirildi!")
                 await dm(v.uid, "Sizni osishdi :(")
             else:
-                await bot.send_message(g.chat_id, "Fikrlar bo'linib ketdi... Hech kim osilmadi.")
-        else:
-            await bot.send_message(g.chat_id, "Hech kim ovoz bermadi. Hech kim osilmadi.")
+                await bot.send_message(g.chat_id, "Ovozlar teng keldi, hech kim osilmadi.")
+        
         w = win_check(g)
         if w:
             return await finish(g, w)
 
 
-# ---- Tugmalar (shaxsiy chatda) ----------------------------------------------------
 async def on_choice(c: CallbackQuery):
     prefix, chat_id, target = c.data.split(":")
     g = games.get(int(chat_id))
     me = g.players.get(c.from_user.id) if g else None
     if not g or not me or not me.alive:
-        return await c.answer("Siz bu o'yinda emassiz yoki o'lgansiz.", show_alert=True)
+        return await c.answer("Siz bu o'yinda emassiz.", show_alert=True)
     t = g.players.get(int(target))
     if not t or not t.alive:
         return await c.answer("Bu o'yinchi tirik emas.", show_alert=True)
@@ -440,22 +406,18 @@ async def on_choice(c: CallbackQuery):
     if prefix == "k" and g.phase == "night" and me.role in ("don", "mafia"):
         g.mafia_votes[me.uid] = t.uid
         await c.message.edit_text(f"Siz <b>{escape(t.name)}</b> ni tanladingiz")
-        for p in g.mafia_alive():     # sheriklarga ko'rinadi (Don ... uchun ovoz berdi)
-            if p.uid != me.uid:
-                await dm(p.uid, f"{ROLE_NAME[me.role]} {mention(me)} - {escape(t.name)} uchun ovoz berdi")
     elif prefix == "d" and g.phase == "night" and me.role == "doctor":
         g.heal = t.uid
-        await c.message.edit_text(f"Siz <b>{escape(t.name)}</b> ni davolashni tanladingiz")
+        await c.message.edit_text(f"Siz <b>{escape(t.name)}</b> ni davolayapsiz")
     elif prefix == "c" and g.phase == "night" and me.role == "cop" and not g.check_done:
         g.check_done = True
-        shown = "🤵 Mafiya a'zosi" if t.role in ("don", "mafia") else "🙂 Tinch (mafiya emas)"
-        await c.message.edit_text(f"<b>{escape(t.name)}</b> - {shown}")
+        shown = "🤵 Mafiya a'zosi" if t.role in ("don", "mafia") else "🙂 Tinch aholi"
+        await c.message.edit_text(f"<b>{escape(t.name)}</b> — {shown}")
     elif prefix == "v" and g.phase == "vote":
         g.day_votes[me.uid] = t.uid
         await c.message.edit_text(f"Siz <b>{escape(t.name)}</b> ga ovoz berdingiz")
-        await bot.send_message(g.chat_id, f"{mention(me)} {mention(t)} uchun ovoz berdi")
     else:
-        return await c.answer("Hozir bu amalni bajarib bo'lmaydi.", show_alert=True)
+        return await c.answer("Hozir mumkin emas.", show_alert=True)
     await c.answer()
 
 
@@ -463,16 +425,14 @@ async def main():
     global bot
     bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+    
     await bot.set_my_commands([
-        BotCommand(command="game", description="yangi o'yinni boshlash"),
-        BotCommand(command="extend", description="ro'yxatdan o'tish vaqtini uzaytirish"),
-        BotCommand(command="start", description="ro'yxatdan o'tishni tugatish"),
-        BotCommand(command="stop", description="o'yinni to'xtatish"),
-        BotCommand(command="next", description="keyingi o'yin haqida xabar"),
-        BotCommand(command="top", description="reyting"),
-        BotCommand(command="share", description="do'stlaringizni taklif qiling"),
-        BotCommand(command="help", description="yordam"),
+        BotCommand(command="game", description="O'yinni boshlash"),
+        BotCommand(command="stop", description="O'yinni to'xtatish"),
+        BotCommand(command="top", description="Reyting"),
+        BotCommand(command="help", description="Yordam"),
     ])
+    
     dp.message.register(cmd_game, Command("game"))
     dp.message.register(cmd_extend, Command("extend"))
     dp.message.register(cmd_next, Command("next"))
@@ -481,8 +441,9 @@ async def main():
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_stop, Command("stop"))
     dp.message.register(cmd_start, Command("start"))
-    dp.message.register(cmd_fileid, F.animation)
     dp.callback_query.register(on_choice, F.data.regexp(r"^[kdcv]:-?\d+:\d+$"))
+    
+    print("Bot ishga tushdi...")
     await dp.start_polling(bot)
 
 
